@@ -1,0 +1,1 @@
+<?php namespace App\Models; final class AttendanceSession extends BaseModel { public function deactivateTeacher(int $teacherId):void{$this->db->prepare('UPDATE attendance_sessions SET active=0 WHERE teacher_id=?')->execute([$teacherId]);} }

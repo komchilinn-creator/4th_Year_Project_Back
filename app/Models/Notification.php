@@ -1,0 +1,1 @@
+<?php namespace App\Models; final class Notification extends BaseModel { public function forUser(int $userId):array{return $this->all('SELECT id,message,read_at,created_at FROM notifications WHERE user_id=? ORDER BY created_at DESC',[$userId]);} }

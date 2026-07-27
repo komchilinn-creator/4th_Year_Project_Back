@@ -1,0 +1,1 @@
+<?php namespace App\Services; final class NotificationService { public function __construct(private \PDO $db) {} public function notify(int $userId,string $message):void{$this->db->prepare('INSERT INTO notifications(user_id,message) VALUES(?,?)')->execute([$userId,$message]);} }

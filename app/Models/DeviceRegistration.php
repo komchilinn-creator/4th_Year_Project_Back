@@ -1,0 +1,1 @@
+<?php namespace App\Models; final class DeviceRegistration extends BaseModel { public function resetForUser(int $userId):void{$this->db->prepare('UPDATE students SET device_uuid=NULL WHERE user_id=?')->execute([$userId]);} }

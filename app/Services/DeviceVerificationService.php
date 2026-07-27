@@ -1,0 +1,1 @@
+<?php namespace App\Services; use App\Helpers\HttpException; final class DeviceVerificationService { public function verify(?string $registered,string $presented):void{if(!$presented)throw new HttpException('Device identification is required.',422);if($registered&&$registered!==$presented)throw new HttpException('This account is registered on another device.',403);} }

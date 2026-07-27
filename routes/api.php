@@ -1,0 +1,1 @@
+<?php return ['health','register','login','logout','me','student/profile','student/attendance','student/schedule','student/scan','attendance/create','attendance/generateQR','attendance/live','attendance/manual','reports/monthly','admin/users','admin/verify','admin/device/reset','admin/subject','subjects'];

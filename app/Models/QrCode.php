@@ -1,0 +1,1 @@
+<?php namespace App\Models; final class QrCode extends BaseModel { public function deactivateForTeacher(int $teacherId):void{$this->db->prepare('UPDATE qr_codes q JOIN attendance_sessions s ON s.id=q.session_id SET q.active=0 WHERE s.teacher_id=?')->execute([$teacherId]);} }
