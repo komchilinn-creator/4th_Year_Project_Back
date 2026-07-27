@@ -1,0 +1,1 @@
+<?php namespace App\Controllers; use App\Services\ScheduleService; final class ScheduleController extends BaseController { public function index():array{$this->auth()->current();return ['schedules'=>(new ScheduleService($this->db))->studentSchedule()];} }

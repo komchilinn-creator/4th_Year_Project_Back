@@ -1,0 +1,1 @@
+<?php namespace App\Services; use App\Models\Schedule; final class ScheduleService { public function __construct(private \PDO $db) {} public function studentSchedule():array{return (new Schedule($this->db))->forStudent();} }
