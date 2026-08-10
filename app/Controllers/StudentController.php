@@ -1,3 +1,35 @@
-<?php namespace App\Controllers;
-use App\Models\{Attendance,Schedule,Student}; use App\Services\AttendanceService;
-final class StudentController extends BaseController { public function profile():array{$u=$this->auth()->role('student');return ['profile'=>(new Student($this->db))->profile($u['id'])];} public function attendance():array{$u=$this->auth()->role('student');return ['attendance'=>(new Attendance($this->db))->history($u['id'])];} public function schedule():array{$this->auth()->role('student');return ['schedules'=>(new Schedule($this->db))->forStudent()];} public function scan():array{$u=$this->auth()->role('student');return (new AttendanceService($this->db))->scan($u['id'],trim((string)($this->input['token']??'')));} }
+<?php
+
+namespace App\Controllers;
+
+use App\Models\Attendance;
+use App\Models\Schedule;
+use App\Models\Student;
+use App\Services\AttendanceService;
+
+final class StudentController extends BaseController
+{
+    public function profile(): array
+    {
+        $user = $this->auth()->role('student');
+        return ['profile' => (new Student($this->db))->profile($user['id'])];
+    }
+
+    public function attendance(): array
+    {
+        $user = $this->auth()->role('student');
+        return ['attendance' => (new Attendance($this->db))->history($user['id'])];
+    }
+
+    public function schedule(): array
+    {
+        $this->auth()->role('student');
+        return ['schedules' => (new Schedule($this->db))->forStudent()];
+    }
+
+    public function scan(): array
+    {
+        $user = $this->auth()->role('student');
+        return (new AttendanceService($this->db))->scan($user['id'], trim((string) ($this->input['token'] ?? '')));
+    }
+}

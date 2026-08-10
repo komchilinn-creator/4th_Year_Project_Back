@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS attendance_sessions (
   FOREIGN KEY (subject_id) REFERENCES subjects(id), FOREIGN KEY (schedule_id) REFERENCES schedules(id)
 );
 CREATE TABLE IF NOT EXISTS qr_codes (
-  id INT AUTO_INCREMENT PRIMARY KEY, session_id INT NOT NULL, token VARCHAR(100) NOT NULL UNIQUE,
+  id INT AUTO_INCREMENT PRIMARY KEY, session_id INT NOT NULL, token_hash VARCHAR(255) NOT NULL UNIQUE,
   expires_at DATETIME NOT NULL, active TINYINT(1) NOT NULL DEFAULT 1,
   FOREIGN KEY (session_id) REFERENCES attendance_sessions(id) ON DELETE CASCADE
 );

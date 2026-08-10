@@ -1,3 +1,188 @@
-<?php namespace App\Services;
-use App\Helpers\HttpException; use App\Models\{Student,Teacher,User};
-final class AuthenticationService { public function __construct(private \PDO $db) {} private function users():User{return new User($this->db);} public function register(array $in):array {$u=trim((string)($in['username']??''));$p=(string)($in['password']??'');$n=trim((string)($in['full_name']??''));$r=$in['role']??'';if(!preg_match('/^[A-Za-z0-9_.-]{3,50}$/',$u)||!$n||strlen($p)<6||!in_array($r,['student','teacher'],true))throw new HttpException('Enter a valid name, username, 6+ character password, and role.',422);try{$this->db->beginTransaction();$id=$this->users()->create($u,password_hash($p,PASSWORD_DEFAULT),$n,$r,'pending');$r==='student'?(new Student($this->db))->create($id,trim((string)($in['identifier']??''))):(new Teacher($this->db))->create($id,trim((string)($in['identifier']??'')));$this->db->commit();return ['message'=>'Registration submitted for administrator approval.'];}catch(\Throwable $e){if($this->db->inTransaction())$this->db->rollBack();throw new HttpException('Username or identifier is already in use.',422);}} public function login(array $in):array {$account=$this->users()->byUsername(trim((string)($in['username']??'')));if(!$account||!password_verify((string)($in['password']??''),$account['password_hash']))throw new HttpException('Invalid username or password.',401);if($account['status']!=='active')throw new HttpException($account['status']==='pending'?'Your account is pending administrator approval.':'Your account is disabled.',403);if($account['role']==='student'){$student=(new Student($this->db))->byUser((int)$account['id']);$uuid=trim((string)($in['device_uuid']??''));if(!$uuid)throw new HttpException('Device identification is required.',422);if($student['device_uuid']&&$student['device_uuid']!==$uuid)throw new HttpException('This account is registered on another device.',403);if(!$student['device_uuid'])(new Student($this->db))->setDevice((int)$student['id'],$uuid);}$safe=$this->safe($account);$token=bin2hex(random_bytes(32));$this->db->prepare('DELETE FROM api_tokens WHERE user_id=?')->execute([$account['id']]);$this->db->prepare('INSERT INTO api_tokens(user_id,token,expires_at) VALUES(?,?,DATE_ADD(NOW(),INTERVAL 12 HOUR))')->execute([$account['id'],$token]);$_SESSION['user']=$safe;return ['message'=>'Logged in','user'=>$safe,'token'=>$token];} public function current():array {if(!empty($_SESSION['user']))return $_SESSION['user'];$h=$_SERVER['HTTP_AUTHORIZATION']??$_SERVER['REDIRECT_HTTP_AUTHORIZATION']??'';if(!$h&&function_exists('getallheaders'))$h=getallheaders()['Authorization']??'';if(preg_match('/^Bearer\s+(.+)$/i',$h,$m)){$s=$this->db->prepare("SELECT u.id,u.username,u.full_name,u.role FROM api_tokens t JOIN users u ON u.id=t.user_id WHERE t.token=? AND t.expires_at>NOW() AND u.status='active'");$s->execute([$m[1]]);if($u=$s->fetch())return $this->safe($u);}throw new HttpException('Authentication required.',401);} public function role(string $role):array {$u=$this->current();if($u['role']!==$role)throw new HttpException('Forbidden.',403);return $u;} public function logout():array {$_SESSION=[];if(session_id()!=='')session_destroy();return ['message'=>'Logged out'];} private function safe(array $u):array{return ['id'=>(int)$u['id'],'username'=>$u['username'],'full_name'=>$u['full_name'],'role'=>$u['role']];} }
+<?php
+
+namespace App\Services;
+
+use App\Helpers\HttpException;
+use App\Models\Student;
+use App\Models\Teacher;
+use App\Models\User;
+
+final class AuthenticationService
+{
+    private const TOKEN_LIFETIME_HOURS = 12;
+
+    public function __construct(private \PDO $db)
+    {
+    }
+
+    public function register(array $input): array
+    {
+        $username = trim((string) ($input['username'] ?? ''));
+        $password = (string) ($input['password'] ?? '');
+        $fullName = trim((string) ($input['full_name'] ?? ''));
+        $role = (string) ($input['role'] ?? '');
+        $identifier = trim((string) ($input['identifier'] ?? ''));
+
+        if (!preg_match('/^[A-Za-z0-9_.-]{3,50}$/', $username)
+            || $fullName === ''
+            || strlen($fullName) > 120
+            || strlen($password) < 6
+            || !in_array($role, ['student', 'teacher'], true)) {
+            throw new HttpException('Enter a valid name, username, 6+ character password, and role.', 422);
+        }
+
+        try {
+            $this->db->beginTransaction();
+            $userId = $this->users()->create(
+                $username,
+                password_hash($password, PASSWORD_DEFAULT),
+                $fullName,
+                $role,
+                'pending'
+            );
+
+            if ($role === 'student') {
+                (new Student($this->db))->create($userId, $identifier);
+            } else {
+                (new Teacher($this->db))->create($userId, $identifier);
+            }
+
+            $this->db->commit();
+        } catch (\PDOException $exception) {
+            if ($this->db->inTransaction()) {
+                $this->db->rollBack();
+            }
+            throw new HttpException('Username or identifier is already in use.', 422);
+        } catch (\Throwable $exception) {
+            if ($this->db->inTransaction()) {
+                $this->db->rollBack();
+            }
+            throw $exception;
+        }
+
+        return ['message' => 'Registration submitted for administrator approval.'];
+    }
+
+    public function login(array $input): array
+    {
+        $account = $this->users()->byUsername(trim((string) ($input['username'] ?? '')));
+
+        if (!$account || !password_verify((string) ($input['password'] ?? ''), $account['password_hash'])) {
+            throw new HttpException('Invalid username or password.', 401);
+        }
+
+        if ($account['status'] !== 'active') {
+            $message = $account['status'] === 'pending'
+                ? 'Your account is pending administrator approval.'
+                : 'Your account is disabled.';
+            throw new HttpException($message, 403);
+        }
+
+        if ($account['role'] === 'student') {
+            $this->verifyStudentDevice((int) $account['id'], trim((string) ($input['device_uuid'] ?? '')));
+        }
+
+        $user = $this->safeUser($account);
+        $token = bin2hex(random_bytes(32));
+        $this->replaceApiToken((int) $account['id'], $token);
+        $_SESSION['user'] = $user;
+
+        return ['message' => 'Logged in', 'user' => $user, 'token' => $token];
+    }
+
+    public function current(): array
+    {
+        if (!empty($_SESSION['user'])) {
+            return $_SESSION['user'];
+        }
+
+        $token = $this->bearerToken();
+        if ($token !== null) {
+            $statement = $this->db->prepare(
+                "SELECT u.id, u.username, u.full_name, u.role
+                 FROM api_tokens t
+                 JOIN users u ON u.id = t.user_id
+                 WHERE t.token = ? AND t.expires_at > NOW() AND u.status = 'active'"
+            );
+            $statement->execute([$token]);
+            $user = $statement->fetch();
+            if ($user) {
+                return $this->safeUser($user);
+            }
+        }
+
+        throw new HttpException('Authentication required.', 401);
+    }
+
+    public function role(string $role): array
+    {
+        $user = $this->current();
+        if ($user['role'] !== $role) {
+            throw new HttpException('Forbidden.', 403);
+        }
+
+        return $user;
+    }
+
+    public function logout(): array
+    {
+        $_SESSION = [];
+        if (session_id() !== '') {
+            session_destroy();
+        }
+
+        return ['message' => 'Logged out'];
+    }
+
+    private function users(): User
+    {
+        return new User($this->db);
+    }
+
+    private function verifyStudentDevice(int $userId, string $deviceUuid): void
+    {
+        if ($deviceUuid === '') {
+            throw new HttpException('Device identification is required.', 422);
+        }
+
+        $student = (new Student($this->db))->byUser($userId);
+        if (!$student) {
+            throw new HttpException('Student account not found.', 403);
+        }
+        if ($student['device_uuid'] && $student['device_uuid'] !== $deviceUuid) {
+            throw new HttpException('This account is registered on another device.', 403);
+        }
+        if (!$student['device_uuid']) {
+            (new Student($this->db))->setDevice((int) $student['id'], $deviceUuid);
+        }
+    }
+
+    private function replaceApiToken(int $userId, string $token): void
+    {
+        $this->db->prepare('DELETE FROM api_tokens WHERE user_id = ?')->execute([$userId]);
+        $this->db->prepare(
+            'INSERT INTO api_tokens(user_id, token, expires_at) VALUES (?, ?, DATE_ADD(NOW(), INTERVAL ' . self::TOKEN_LIFETIME_HOURS . ' HOUR))'
+        )->execute([$userId, $token]);
+    }
+
+    private function bearerToken(): ?string
+    {
+        $header = $_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '';
+        if ($header === '' && function_exists('getallheaders')) {
+            $headers = getallheaders();
+            $header = $headers['Authorization'] ?? $headers['authorization'] ?? '';
+        }
+
+        return preg_match('/^Bearer\s+(.+)$/i', $header, $matches) ? $matches[1] : null;
+    }
+
+    private function safeUser(array $user): array
+    {
+        return [
+            'id' => (int) $user['id'],
+            'username' => $user['username'],
+            'full_name' => $user['full_name'],
+            'role' => $user['role'],
+        ];
+    }
+}
