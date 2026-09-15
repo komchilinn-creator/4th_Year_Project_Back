@@ -28,7 +28,7 @@ try {
         'health'=>fn()=>['message'=>'QR Attendance API is running'], 'register'=>fn()=>$controllers['auth']->register(), 'login'=>fn()=>$controllers['auth']->login(), 'logout'=>fn()=>$controllers['auth']->logout(), 'me'=>fn()=>$controllers['auth']->me(),
         'student/profile'=>fn()=>$controllers['student']->profile(), 'student/attendance'=>fn()=>$controllers['student']->attendance(), 'student/schedule'=>fn()=>$controllers['student']->schedule(), 'student/scan'=>fn()=>$controllers['student']->scan(),
         'attendance/create'=>fn()=>$controllers['attendance']->create(), 'attendance/generateQR'=>fn()=>$controllers['attendance']->create(), 'attendance/live'=>fn()=>$controllers['attendance']->live(), 'attendance/manual'=>fn()=>$controllers['attendance']->manual(),
-        'reports/monthly'=>fn()=>$controllers['report']->monthly(), 'admin/users'=>fn()=>$controllers['admin']->users(), 'admin/verify'=>fn()=>$controllers['admin']->verify(), 'admin/device/reset'=>fn()=>$controllers['admin']->resetDevice(), 'admin/subject'=>fn()=>$controllers['admin']->saveSubject(), 'subjects'=>fn()=>$controllers['admin']->subjects(),
+        'reports/monthly'=>fn()=>$controllers['report']->monthly(), 'admin/users'=>fn()=>$controllers['admin']->users(), 'admin/verify'=>fn()=>$controllers['admin']->verify(), 'admin/status'=>fn()=>$controllers['admin']->setStatus(), 'admin/device/reset'=>fn()=>$controllers['admin']->resetDevice(), 'admin/subject'=>fn()=>$controllers['admin']->saveSubject(), 'subjects'=>fn()=>$controllers['admin']->subjects(),
     ];
     if (!isset($routes[$action])) ApiResponse::send(['message'=>'Endpoint not found'], 404);
     ApiResponse::send($routes[$action]());

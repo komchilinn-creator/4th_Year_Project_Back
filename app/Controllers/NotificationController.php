@@ -1,1 +1,3 @@
-<?php namespace App\Controllers; use App\Models\Notification; final class NotificationController extends BaseController { public function index():array{$u=$this->auth()->current();return ['notifications'=>(new Notification($this->db))->forUser($u['id'])];} }
+<?php namespace App\Controllers; 
+use App\Models\Notification; 
+final class NotificationController extends BaseController { public function index():array{$u=$this->auth()->current();return ['notifications'=>(new Notification($this->db))->forUser($u['id'])];} }
