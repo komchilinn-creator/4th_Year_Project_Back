@@ -74,14 +74,21 @@ final class AttendanceService
         // The current data model has no student-to-subject enrollment table.  Do not
         // incorrectly reject a valid scan merely because the teacher has no schedule.
         try {
-            (new Attendance($this->db))->record((int) $qr['session_id'], (int) $student['id']);
+            $recorded = (new Attendance($this->db))->record((int) $qr['session_id'], (int) $student['id']);
         } catch (\PDOException $e) {
             if ((int) ($e->errorInfo[1] ?? 0) === 1062) {
                 throw new HttpException('Attendance has already been recorded.', 409);
             }
             throw $e;
         }
-        return ['message' => 'Attendance recorded successfully.'];
+        if (!$recorded) {
+            throw new HttpException('Attendance could not be recorded. Please try again.', 500);
+        }
+
+        return [
+            'attendance_recorded' => true,
+            'message' => 'Yes - your attendance has been recorded in the teacher\'s roll call.',
+        ];
     }
 
     private function normaliseQrPayload(string $payload): string
@@ -89,11 +96,11 @@ final class AttendanceService
         $payload = trim($payload);
         $prefix = 'ATTENDQR:';
 
-        if (str_starts_with($payload, $prefix)) {
+        if (stripos($payload, $prefix) === 0) {
             $payload = substr($payload, strlen($prefix));
         }
 
-        return trim($payload);
+        return strtolower(trim($payload));
     }
 
     public function live(int $userId): array
