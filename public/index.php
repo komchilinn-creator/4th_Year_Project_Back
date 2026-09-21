@@ -21,7 +21,7 @@ use App\Helpers\ApiResponse;
 try {
     $config = require dirname(__DIR__) . '/config/database.php';
     $pdo = new PDO("mysql:host={$config['host']};dbname={$config['database']};charset={$config['charset']}", $config['username'], $config['password'], [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
-    $body = json_decode(file_get_contents('php://input'), true); $body = is_array($body) ? $body : $_POST;
+    $body = json_decode(file_get_contents('php://input'), true); $body = is_array($body) ? $body : ($_SERVER['REQUEST_METHOD'] === 'GET' ? $_GET : $_POST);
     $action = (string)($_GET['action'] ?? 'health');
     $controllers = ['auth' => new AuthController($pdo, $body), 'student' => new StudentController($pdo, $body), 'attendance' => new AttendanceController($pdo, $body), 'report' => new ReportController($pdo, $body), 'admin' => new AdminController($pdo, $body)];
     $routes = [

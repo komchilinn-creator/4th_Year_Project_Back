@@ -10,14 +10,23 @@ CREATE TABLE IF NOT EXISTS users (
 );
 CREATE TABLE IF NOT EXISTS students (
   id INT AUTO_INCREMENT PRIMARY KEY, user_id INT NOT NULL UNIQUE, student_no VARCHAR(50) UNIQUE,
+  class_name VARCHAR(30) NULL, year_level TINYINT UNSIGNED NULL,
   device_uuid VARCHAR(100) NULL, FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
+CREATE TABLE IF NOT EXISTS subjects (id INT AUTO_INCREMENT PRIMARY KEY, code VARCHAR(30) NOT NULL UNIQUE, name VARCHAR(120) NOT NULL, year_level TINYINT UNSIGNED NULL, teacher_registration_enabled TINYINT(1) NOT NULL DEFAULT 0);
+INSERT INTO subjects (code,name,year_level,teacher_registration_enabled) VALUES
+('IT41023','Computer Architecture and Organization',4,1),
+('IT41033','Operating Systems',4,1),
+('IT41032','Advanced Computer Networks',4,1),
+('IT41026','Advanced Data Management Techniques',4,1),
+('IT41017','Modern Control System',4,1)
+ON DUPLICATE KEY UPDATE name=VALUES(name),year_level=VALUES(year_level),teacher_registration_enabled=VALUES(teacher_registration_enabled);
 CREATE TABLE IF NOT EXISTS teachers (
   id INT AUTO_INCREMENT PRIMARY KEY, user_id INT NOT NULL UNIQUE, staff_no VARCHAR(50) UNIQUE,
-  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  subject_id INT NULL, subject_code VARCHAR(30) NULL, year_level TINYINT UNSIGNED NULL,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (subject_id) REFERENCES subjects(id)
 );
-CREATE TABLE IF NOT EXISTS subjects (id INT AUTO_INCREMENT PRIMARY KEY, code VARCHAR(30) NOT NULL UNIQUE, name VARCHAR(120) NOT NULL);
-INSERT IGNORE INTO subjects (code, name) VALUES ('ADMT', 'Attendance Management Testing');
 CREATE TABLE IF NOT EXISTS classrooms (id INT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(80) NOT NULL UNIQUE);
 CREATE TABLE IF NOT EXISTS schedules (
   id INT AUTO_INCREMENT PRIMARY KEY, subject_id INT NOT NULL, teacher_id INT NOT NULL, classroom_id INT NULL,

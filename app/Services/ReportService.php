@@ -3,94 +3,85 @@
 namespace App\Services;
 
 use App\Helpers\AttendanceCalculator;
+use App\Helpers\HttpException;
+use App\Models\Student;
+use App\Models\Teacher;
 
 final class ReportService
 {
-    public function __construct(private \PDO $db)
+    private const REQUIRED_PERCENTAGE = 75;
+
+    public function __construct(private \PDO $db) {}
+
+    public function monthly(array $user, ?string $requestedMonth = null): array
     {
+        $month = $requestedMonth ?: date('Y-m');
+        if (!preg_match('/^\d{4}-(0[1-9]|1[0-2])$/', $month)) {
+            throw new HttpException('Month must use YYYY-MM format.', 422);
+        }
+
+        $start = $month . '-01 00:00:00';
+        $end = date('Y-m-d H:i:s', strtotime($start . ' +1 month'));
+
+        return $user['role'] === 'student'
+            ? $this->studentMonthly($user, $month, $start, $end)
+            : $this->teacherMonthly($user, $month, $start, $end);
     }
 
-    public function monthly(array $user): array
+    private function studentMonthly(array $user, string $month, string $start, string $end): array
     {
-        $scope = $this->sessionScope($user);
-        $students = $this->studentsForReport($user);
-        $totalSessions = $this->countSessions($scope['sql'], $scope['params']);
-        $attendance = $this->attendanceCounts($scope['sql'], $scope['params'], $user);
+        $student = (new Student($this->db))->byUser((int) $user['id']);
+        if (!$student) throw new HttpException('Student account not found.', 404);
 
-        $report = array_map(function (array $student) use ($attendance, $totalSessions): array {
-            $attended = (int) ($attendance[$student['id']] ?? 0);
+        $statement = $this->db->prepare(
+            "SELECT sub.id,sub.code,sub.name,
+                    COUNT(DISTINCT x.id) total_sessions,
+                    COUNT(DISTINCT CASE WHEN a.status IN ('present','late') THEN a.session_id END) attended
+             FROM subjects sub
+             LEFT JOIN attendance_sessions x ON x.subject_id=sub.id AND x.starts_at>=? AND x.starts_at<?
+             LEFT JOIN attendance a ON a.session_id=x.id AND a.student_id=?
+             WHERE sub.year_level=? AND sub.teacher_registration_enabled=1
+             GROUP BY sub.id,sub.code,sub.name ORDER BY sub.code"
+        );
+        $statement->execute([$start, $end, $student['id'], $student['year_level']]);
 
-            return [
-                'full_name' => $student['full_name'],
-                'student_no' => $student['student_no'],
+        return $this->response($statement->fetchAll(), $month, (int) $student['year_level']);
+    }
+
+    private function teacherMonthly(array $user, string $month, string $start, string $end): array
+    {
+        $teacher = (new Teacher($this->db))->byUser((int) $user['id']);
+        if (!$teacher) throw new HttpException('Teacher account not found.', 404);
+
+        $statement = $this->db->prepare(
+            "SELECT s.id student_id,u.full_name,s.student_no,sub.code,sub.name,
+                    COUNT(DISTINCT x.id) total_sessions,
+                    COUNT(DISTINCT CASE WHEN a.status IN ('present','late') THEN a.session_id END) attended
+             FROM students s JOIN users u ON u.id=s.user_id AND u.status='active'
+             JOIN subjects sub ON sub.id=?
+             LEFT JOIN attendance_sessions x ON x.subject_id=sub.id AND x.teacher_id=? AND x.starts_at>=? AND x.starts_at<?
+             LEFT JOIN attendance a ON a.session_id=x.id AND a.student_id=s.id
+             WHERE s.year_level=? GROUP BY s.id,u.full_name,s.student_no,sub.code,sub.name ORDER BY u.full_name"
+        );
+        $statement->execute([$teacher['subject_id'], $teacher['id'], $start, $end, $teacher['year_level']]);
+        return $this->response($statement->fetchAll(), $month, (int) $teacher['year_level']);
+    }
+
+    private function response(array $rows, string $month, int $yearLevel): array
+    {
+        $report = array_map(function (array $row): array {
+            $attended = (int) $row['attended'];
+            $total = (int) $row['total_sessions'];
+            $percentage = AttendanceCalculator::percentage($attended, $total);
+            return array_merge($row, [
                 'attended' => $attended,
-                'total_sessions' => $totalSessions,
-                'percentage' => AttendanceCalculator::percentage($attended, $totalSessions),
-            ];
-        }, $students);
+                'total_sessions' => $total,
+                'percentage' => $percentage,
+                'meets_requirement' => $percentage >= self::REQUIRED_PERCENTAGE,
+                'status' => $percentage >= self::REQUIRED_PERCENTAGE ? 'Good standing' : 'Below requirement',
+            ]);
+        }, $rows);
 
-        return ['report' => $report];
-    }
-
-    private function sessionScope(array $user): array
-    {
-        if ($user['role'] !== 'teacher') {
-            return ['sql' => '1 = 1', 'params' => []];
-        }
-
-        $statement = $this->db->prepare('SELECT id FROM teachers WHERE user_id = ?');
-        $statement->execute([$user['id']]);
-        $teacherId = $statement->fetchColumn();
-
-        return ['sql' => 'x.teacher_id = ?', 'params' => [(int) $teacherId]];
-    }
-
-    private function studentsForReport(array $user): array
-    {
-        $sql = 'SELECT s.id, s.student_no, u.full_name
-                FROM students s
-                JOIN users u ON u.id = s.user_id
-                WHERE u.status = \'active\'';
-        $params = [];
-
-        if ($user['role'] === 'student') {
-            $sql .= ' AND s.user_id = ?';
-            $params[] = $user['id'];
-        }
-
-        $sql .= ' ORDER BY u.full_name';
-        $statement = $this->db->prepare($sql);
-        $statement->execute($params);
-
-        return $statement->fetchAll();
-    }
-
-    private function countSessions(string $scopeSql, array $scopeParams): int
-    {
-        $statement = $this->db->prepare("SELECT COUNT(*) FROM attendance_sessions x WHERE {$scopeSql}");
-        $statement->execute($scopeParams);
-
-        return (int) $statement->fetchColumn();
-    }
-
-    private function attendanceCounts(string $scopeSql, array $scopeParams, array $user): array
-    {
-        $sql = "SELECT a.student_id, COUNT(*) AS attended
-                FROM attendance a
-                JOIN attendance_sessions x ON x.id = a.session_id
-                JOIN students s ON s.id = a.student_id
-                WHERE a.status IN ('present', 'late') AND {$scopeSql}";
-        $params = $scopeParams;
-
-        if ($user['role'] === 'student') {
-            $sql .= ' AND s.user_id = ?';
-            $params[] = $user['id'];
-        }
-
-        $sql .= ' GROUP BY a.student_id';
-        $statement = $this->db->prepare($sql);
-        $statement->execute($params);
-
-        return array_column($statement->fetchAll(), 'attended', 'student_id');
+        return ['month'=>$month,'year_level'=>$yearLevel,'required_percentage'=>self::REQUIRED_PERCENTAGE,'report'=>$report];
     }
 }

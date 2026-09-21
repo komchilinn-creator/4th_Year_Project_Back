@@ -23,8 +23,9 @@ final class StudentController extends BaseController
 
     public function schedule(): array
     {
-        $this->auth()->role('student');
-        return ['schedules' => (new Schedule($this->db))->forStudent()];
+        $user = $this->auth()->role('student');
+        $student = (new Student($this->db))->byUser($user['id']);
+        return ['schedules' => (new Schedule($this->db))->forStudent((int) $student['year_level'])];
     }
 
     public function scan(): array

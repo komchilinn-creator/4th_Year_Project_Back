@@ -4,7 +4,7 @@ All API requests go to `public/index.php?action={action}`. Send JSON bodies and 
 
 `POST register` accepts `full_name`, `username`, `password`, `role`, and optional `identifier`.
 
-`POST login` accepts `username`, `password`, and a `device_uuid` for student accounts.
+`POST login` accepts `username`, `password`, and a `device_uuid` for student accounts. Students are bound to their first registered device and a new student login replaces that device's previous token. Every teacher login creates an independent token, so teachers may stay signed in on multiple devices simultaneously. Logging out revokes only the token from the device making that request.
 
 Teachers use `attendance/create` with `title`, `subject_id`, and `minutes` (1-240). Creating a session deactivates that teacher's previous QR code. Students submit the returned `token` to `student/scan`; the API validates the active, unexpired token and prevents duplicate records.
 

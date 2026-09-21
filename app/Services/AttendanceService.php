@@ -14,8 +14,8 @@ final class AttendanceService
         $subjectId = (int)($in['subject_id'] ?? 0);
         $minutes = (int)($in['minutes'] ?? 10);
         $title = trim((string)($in['title'] ?? ''));
-        if (!$teacher || !$subjectId || !(new Subject($this->db))->exists($subjectId)) {
-            throw new HttpException('A valid subject is required.', 422);
+        if (!$teacher || !$subjectId || (int) $teacher['subject_id'] !== $subjectId) {
+            throw new HttpException('You can only create attendance for your registered subject.', 422);
         }
         if ($title === '' || strlen($title) > 150) {
             throw new HttpException('A title between 1 and 150 characters is required.', 422);

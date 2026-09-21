@@ -9,6 +9,10 @@
 
 The default XAMPP user configuration is in `config/database.php`. Change it if your MySQL root account has a password.
 
+## Login rules
+
+Students are registered to one device using the client device UUID; administrators can clear that registration with `admin/device/reset`. Teacher logins are multi-device: each successful login receives its own API token and does not invalidate a teacher's sessions on other devices. Logging out removes only the current device's token.
+
 ## Initial administrator
 
 - Username: `admin`
