@@ -7,6 +7,8 @@
    `C:\xampp2\mysql\bin\mysql.exe -u root < database\schema.sql`
 3. Open `http://localhost/4th_Year_Pj_Backend/public/index.php?action=health`.
 
+For an existing database created before multi-subject teachers were added, apply `database/migrations/003_multi_subject_teachers.sql` once.
+
 The default XAMPP user configuration is in `config/database.php`. Change it if your MySQL root account has a password.
 
 ## Login rules

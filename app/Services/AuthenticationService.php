@@ -23,7 +23,14 @@ final class AuthenticationService
         $fullName = trim((string) ($input['full_name'] ?? ''));
         $role = (string) ($input['role'] ?? '');
         $identifier = trim((string) ($input['identifier'] ?? ''));
-        $subjectCode = strtoupper(trim((string) ($input['subject_code'] ?? '')));
+        $submittedCodes = $input['subject_codes'] ?? ($input['subject_code'] ?? []);
+        if (!is_array($submittedCodes)) {
+            $submittedCodes = preg_split('/[\s,]+/', (string) $submittedCodes, -1, PREG_SPLIT_NO_EMPTY);
+        }
+        $subjectCodes = array_values(array_unique(array_filter(array_map(
+            static fn ($code): string => strtoupper(trim((string) $code)),
+            $submittedCodes
+        ))));
         $className = strtoupper(trim((string) ($input['class_name'] ?? '')));
 
         if (!preg_match('/^[A-Za-z0-9_.-]{3,50}$/', $username)
@@ -37,12 +44,19 @@ final class AuthenticationService
         try {
             $this->db->beginTransaction();
 
-            $subject = null;
+            $subjects = [];
             $yearLevel = null;
             if ($role === 'teacher') {
-                $subject = (new Subject($this->db))->byRegistrationCode($subjectCode);
-                if (!$subject) {
-                    throw new HttpException('Invalid subject code. Please enter a valid subject code.', 422);
+                if (!$subjectCodes) {
+                    throw new HttpException('Select at least one subject.', 422);
+                }
+                $subjectModel = new Subject($this->db);
+                foreach ($subjectCodes as $subjectCode) {
+                    $subject = $subjectModel->byRegistrationCode($subjectCode);
+                    if (!$subject) {
+                        throw new HttpException("Invalid subject code: {$subjectCode}.", 422);
+                    }
+                    $subjects[] = $subject;
                 }
             } else {
                 if (!preg_match('/^([1-9])[A-Z0-9-]{1,29}$/', $className, $matches)) {
@@ -62,7 +76,7 @@ final class AuthenticationService
             if ($role === 'student') {
                 (new Student($this->db))->create($userId, $identifier, $className, $yearLevel);
             } else {
-                (new Teacher($this->db))->create($userId, $identifier, $subject);
+                (new Teacher($this->db))->create($userId, $identifier, $subjects);
             }
 
             $this->db->commit();
@@ -218,15 +232,20 @@ final class AuthenticationService
         ];
 
         if ($user['role'] === 'teacher') {
-            $teacher = (new Teacher($this->db))->byUser((int) $user['id']);
+            $teacherModel = new Teacher($this->db);
+            $teacher = $teacherModel->byUser((int) $user['id']);
             if ($teacher) {
-                $safe['subject'] = [
-                    'id' => (int) $teacher['subject_id'],
-                    'code' => $teacher['subject_code'],
-                    'name' => $teacher['subject_name'],
-                ];
-                $safe['year_level'] = (int) $teacher['year_level'];
-                $safe['welcome_message'] = 'Welcome, ' . $teacher['subject_name'] . ' Teacher!';
+                $subjects = array_map(static function (array $subject): array {
+                    $subject['id'] = (int) $subject['id'];
+                    $subject['year_level'] = (int) $subject['year_level'];
+                    return $subject;
+                }, $teacherModel->subjectsByUser((int) $user['id']));
+                $safe['subjects'] = $subjects;
+                $safe['year_levels'] = array_values(array_unique(array_column($subjects, 'year_level')));
+                // Retain the old fields for older clients while the array is authoritative.
+                $safe['subject'] = $subjects[0] ?? null;
+                $safe['year_level'] = $subjects[0]['year_level'] ?? null;
+                $safe['welcome_message'] = 'Welcome, ' . $user['full_name'] . '!';
             }
         } elseif ($user['role'] === 'student') {
             $student = (new Student($this->db))->byUser((int) $user['id']);

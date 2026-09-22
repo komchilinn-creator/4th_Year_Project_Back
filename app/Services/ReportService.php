@@ -13,9 +13,9 @@ final class ReportService
 
     public function __construct(private \PDO $db) {}
 
-    public function monthly(array $user, ?string $requestedMonth = null): array
+    public function monthly(array $user, array $filters = []): array
     {
-        $month = $requestedMonth ?: date('Y-m');
+        $month = (string)($filters['month'] ?? date('Y-m'));
         if (!preg_match('/^\d{4}-(0[1-9]|1[0-2])$/', $month)) {
             throw new HttpException('Month must use YYYY-MM format.', 422);
         }
@@ -25,7 +25,7 @@ final class ReportService
 
         return $user['role'] === 'student'
             ? $this->studentMonthly($user, $month, $start, $end)
-            : $this->teacherMonthly($user, $month, $start, $end);
+            : $this->teacherMonthly($user, $month, $start, $end, (int)($filters['subject_id'] ?? 0), (int)($filters['year_level'] ?? 0));
     }
 
     private function studentMonthly(array $user, string $month, string $start, string $end): array
@@ -48,10 +48,18 @@ final class ReportService
         return $this->response($statement->fetchAll(), $month, (int) $student['year_level']);
     }
 
-    private function teacherMonthly(array $user, string $month, string $start, string $end): array
+    private function teacherMonthly(array $user, string $month, string $start, string $end, int $subjectId, int $yearLevel): array
     {
-        $teacher = (new Teacher($this->db))->byUser((int) $user['id']);
+        $teacherModel = new Teacher($this->db);
+        $teacher = $teacherModel->byUser((int) $user['id']);
         if (!$teacher) throw new HttpException('Teacher account not found.', 404);
+        $subjects = $teacherModel->subjectsByUser((int)$user['id']);
+        if (!$subjects) throw new HttpException('No subjects are assigned to this teacher.', 422);
+        if (!$subjectId) $subjectId = (int)$subjects[0]['id'];
+        $subject = $teacherModel->subjectForTeacher((int)$teacher['id'], $subjectId);
+        if (!$subject) throw new HttpException('That subject is not assigned to this teacher.', 403);
+        if (!$yearLevel) $yearLevel = (int)$subject['year_level'];
+        if ($yearLevel !== (int)$subject['year_level']) throw new HttpException('The selected subject does not belong to the selected year level.', 422);
 
         $statement = $this->db->prepare(
             "SELECT s.id student_id,u.full_name,s.student_no,sub.code,sub.name,
@@ -59,12 +67,15 @@ final class ReportService
                     COUNT(DISTINCT CASE WHEN a.status IN ('present','late') THEN a.session_id END) attended
              FROM students s JOIN users u ON u.id=s.user_id AND u.status='active'
              JOIN subjects sub ON sub.id=?
-             LEFT JOIN attendance_sessions x ON x.subject_id=sub.id AND x.teacher_id=? AND x.starts_at>=? AND x.starts_at<?
+             LEFT JOIN attendance_sessions x ON x.subject_id=sub.id AND x.teacher_id=? AND x.year_level=? AND x.starts_at>=? AND x.starts_at<?
              LEFT JOIN attendance a ON a.session_id=x.id AND a.student_id=s.id
              WHERE s.year_level=? GROUP BY s.id,u.full_name,s.student_no,sub.code,sub.name ORDER BY u.full_name"
         );
-        $statement->execute([$teacher['subject_id'], $teacher['id'], $start, $end, $teacher['year_level']]);
-        return $this->response($statement->fetchAll(), $month, (int) $teacher['year_level']);
+        $statement->execute([$subjectId, $teacher['id'], $yearLevel, $start, $end, $yearLevel]);
+        $response=$this->response($statement->fetchAll(), $month, $yearLevel);
+        $response['subject']=['id'=>(int)$subject['id'],'code'=>$subject['code'],'name'=>$subject['name']];
+        $response['subjects']=array_map(static function(array $item):array{$item['id']=(int)$item['id'];$item['year_level']=(int)$item['year_level'];return $item;},$subjects);
+        return $response;
     }
 
     private function response(array $rows, string $month, int $yearLevel): array

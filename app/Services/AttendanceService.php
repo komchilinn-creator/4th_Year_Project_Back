@@ -12,10 +12,18 @@ final class AttendanceService
     {
         $teacher = (new Teacher($this->db))->byUser($userId);
         $subjectId = (int)($in['subject_id'] ?? 0);
+        $yearLevel = (int)($in['year_level'] ?? 0);
         $minutes = (int)($in['minutes'] ?? 10);
         $title = trim((string)($in['title'] ?? ''));
-        if (!$teacher || !$subjectId || (int) $teacher['subject_id'] !== $subjectId) {
-            throw new HttpException('You can only create attendance for your registered subject.', 422);
+        if (!$teacher) {
+            throw new HttpException('Teacher account not found.', 404);
+        }
+        $subject = (new Teacher($this->db))->subjectForTeacher((int)$teacher['id'], $subjectId);
+        if (!$subject) {
+            throw new HttpException('You can only create attendance for a subject assigned to your account.', 422);
+        }
+        if (!$yearLevel || (int)$subject['year_level'] !== $yearLevel) {
+            throw new HttpException('The selected subject does not belong to the selected year level.', 422);
         }
         if ($title === '' || strlen($title) > 150) {
             throw new HttpException('A title between 1 and 150 characters is required.', 422);
@@ -28,7 +36,7 @@ final class AttendanceService
         try {
             $this->db->prepare('UPDATE qr_codes q JOIN attendance_sessions s ON s.id=q.session_id SET q.active=0 WHERE s.teacher_id=? AND q.active=1')->execute([$teacher['id']]);
             $this->db->prepare('UPDATE attendance_sessions SET active=0 WHERE teacher_id=? AND active=1')->execute([$teacher['id']]);
-            $this->db->prepare('INSERT INTO attendance_sessions(teacher_id,subject_id,title,starts_at,expires_at) VALUES(?,?,?,NOW(),DATE_ADD(NOW(),INTERVAL ? MINUTE))')->execute([$teacher['id'], $subjectId, $title, $minutes]);
+            $this->db->prepare('INSERT INTO attendance_sessions(teacher_id,subject_id,year_level,title,starts_at,expires_at) VALUES(?,?,?,?,NOW(),DATE_ADD(NOW(),INTERVAL ? MINUTE))')->execute([$teacher['id'], $subjectId, $yearLevel, $title, $minutes]);
             $sessionId = (int)$this->db->lastInsertId();
             $this->db->prepare('INSERT INTO qr_codes(session_id,token_hash,expires_at) VALUES(?,?,DATE_ADD(NOW(),INTERVAL ? MINUTE))')->execute([$sessionId, password_hash($token, PASSWORD_DEFAULT), $minutes]);
             $this->db->commit();
@@ -45,6 +53,9 @@ final class AttendanceService
             'token' => $token,
             'qr_payload' => 'ATTENDQR:' . $token,
             'expires_at' => $expiresAt->fetchColumn(),
+            'year_level' => $yearLevel,
+            'class' => $yearLevel . $this->ordinalSuffix($yearLevel) . ' Year',
+            'subject' => ['id'=>(int)$subject['id'],'code'=>$subject['code'],'name'=>$subject['name']],
             'message' => 'Attendance session created.',
         ];
     }
@@ -59,7 +70,7 @@ final class AttendanceService
         if (!$student) {
             throw new HttpException('Student account not found.', 403);
         }
-        $rows = $this->db->query('SELECT q.token_hash,q.session_id,s.subject_id,s.teacher_id FROM qr_codes q JOIN attendance_sessions s ON s.id=q.session_id WHERE q.active=1 AND s.active=1 AND q.expires_at>NOW() AND s.expires_at>NOW()')->fetchAll();
+        $rows = $this->db->query('SELECT q.token_hash,q.session_id,x.subject_id,x.teacher_id,x.year_level,sub.code subject_code,sub.name subject_name,u.full_name teacher_name FROM qr_codes q JOIN attendance_sessions x ON x.id=q.session_id JOIN subjects sub ON sub.id=x.subject_id JOIN teachers t ON t.id=x.teacher_id JOIN users u ON u.id=t.user_id WHERE q.active=1 AND x.active=1 AND q.expires_at>NOW() AND x.expires_at>NOW()')->fetchAll();
         $qr = null;
         foreach ($rows as $row) {
             if (password_verify($token, $row['token_hash'])) {
@@ -70,9 +81,9 @@ final class AttendanceService
         if (!$qr) {
             throw new HttpException('Invalid QR code or the QR code has expired.', 422);
         }
-
-        // The current data model has no student-to-subject enrollment table.  Do not
-        // incorrectly reject a valid scan merely because the teacher has no schedule.
+        if ((int)$student['year_level'] !== (int)$qr['year_level']) {
+            throw new HttpException('This attendance session is for a different year level.', 403);
+        }
         try {
             $recorded = (new Attendance($this->db))->record((int) $qr['session_id'], (int) $student['id']);
         } catch (\PDOException $e) {
@@ -87,7 +98,12 @@ final class AttendanceService
 
         return [
             'attendance_recorded' => true,
-            'message' => 'Yes - your attendance has been recorded in the teacher\'s roll call.',
+            'session_id' => (int)$qr['session_id'],
+            'year_level' => (int)$qr['year_level'],
+            'class' => (int)$qr['year_level'] . $this->ordinalSuffix((int)$qr['year_level']) . ' Year',
+            'subject' => ['id'=>(int)$qr['subject_id'],'code'=>$qr['subject_code'],'name'=>$qr['subject_name']],
+            'teacher' => ['id'=>(int)$qr['teacher_id'],'name'=>$qr['teacher_name']],
+            'message' => "Attendance recorded for {$qr['subject_code']} - {$qr['subject_name']}.",
         ];
     }
 
@@ -106,14 +122,17 @@ final class AttendanceService
     public function live(int $userId): array
     {
         $teacher = (new Teacher($this->db))->byUser($userId);
-        $query = $this->db->prepare('SELECT s.id,s.title,CONCAT(sub.code," - ",sub.name) subject,s.expires_at FROM attendance_sessions s JOIN subjects sub ON sub.id=s.subject_id WHERE s.teacher_id=? AND s.active=1 ORDER BY s.id DESC LIMIT 1');
+        if (!$teacher) throw new HttpException('Teacher account not found.', 404);
+        $query = $this->db->prepare('SELECT s.id,s.title,s.year_level,CONCAT(sub.code," - ",sub.name) subject,sub.code subject_code,sub.name subject_name,s.expires_at FROM attendance_sessions s JOIN subjects sub ON sub.id=s.subject_id WHERE s.teacher_id=? AND s.active=1 ORDER BY s.id DESC LIMIT 1');
         $query->execute([$teacher['id']]);
         $session = $query->fetch();
         if (!$session) {
             return ['session' => null, 'total_students' => 0, 'present_students' => 0, 'absent_students' => 0, 'attendance' => []];
         }
         $attendance = (new Attendance($this->db))->live((int)$session['id']);
-        $total = (int)$this->db->query('SELECT COUNT(*) FROM students')->fetchColumn(); $present = count($attendance);
+        $totalQuery=$this->db->prepare("SELECT COUNT(*) FROM students s JOIN users u ON u.id=s.user_id WHERE s.year_level=? AND u.status='active'");
+        $totalQuery->execute([$session['year_level']]);
+        $total = (int)$totalQuery->fetchColumn(); $present = count($attendance);
         return ['session' => $session, 'total_students' => $total, 'present_students' => $present, 'absent_students' => max(0, $total - $present), 'attendance' => $attendance];
     }
 
@@ -122,9 +141,13 @@ final class AttendanceService
         $sessionId = (int) ($in['session_id'] ?? 0);
         $studentId = (int) ($in['student_id'] ?? 0);
         $status = (string) ($in['status'] ?? 'present');
-        $owner = $this->db->prepare('SELECT s.id FROM attendance_sessions s JOIN teachers t ON t.id=s.teacher_id WHERE s.id=? AND t.user_id=?');
+        $owner = $this->db->prepare('SELECT s.id,s.year_level FROM attendance_sessions s JOIN teachers t ON t.id=s.teacher_id WHERE s.id=? AND t.user_id=?');
         $owner->execute([$sessionId, $userId]);
-        if (!$owner->fetch() || !$studentId || !in_array($status, ['present', 'late', 'absent'], true)) {
+        $session=$owner->fetch();
+        $studentQuery=$this->db->prepare('SELECT id,year_level FROM students WHERE id=?');
+        $studentQuery->execute([$studentId]);
+        $student=$studentQuery->fetch();
+        if (!$session || !$student || (int)$student['year_level'] !== (int)$session['year_level'] || !in_array($status, ['present', 'late', 'absent'], true)) {
             throw new HttpException('Invalid attendance record.', 422);
         }
         try {
@@ -136,5 +159,11 @@ final class AttendanceService
             throw $e;
         }
         return ['message' => 'Attendance recorded successfully.'];
+    }
+
+    private function ordinalSuffix(int $year): string
+    {
+        if ($year % 100 >= 11 && $year % 100 <= 13) return 'th';
+        return match ($year % 10) { 1 => 'st', 2 => 'nd', 3 => 'rd', default => 'th' };
     }
 }

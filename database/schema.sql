@@ -27,6 +27,13 @@ CREATE TABLE IF NOT EXISTS teachers (
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   FOREIGN KEY (subject_id) REFERENCES subjects(id)
 );
+CREATE TABLE IF NOT EXISTS teacher_subjects (
+  id INT AUTO_INCREMENT PRIMARY KEY, teacher_id INT NOT NULL, subject_id INT NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY teacher_subject_unique (teacher_id,subject_id),
+  FOREIGN KEY (teacher_id) REFERENCES teachers(id) ON DELETE CASCADE,
+  FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE
+);
 CREATE TABLE IF NOT EXISTS classrooms (id INT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(80) NOT NULL UNIQUE);
 CREATE TABLE IF NOT EXISTS schedules (
   id INT AUTO_INCREMENT PRIMARY KEY, subject_id INT NOT NULL, teacher_id INT NOT NULL, classroom_id INT NULL,
@@ -34,7 +41,7 @@ CREATE TABLE IF NOT EXISTS schedules (
   FOREIGN KEY (subject_id) REFERENCES subjects(id), FOREIGN KEY (teacher_id) REFERENCES teachers(id), FOREIGN KEY (classroom_id) REFERENCES classrooms(id)
 );
 CREATE TABLE IF NOT EXISTS attendance_sessions (
-  id INT AUTO_INCREMENT PRIMARY KEY, teacher_id INT NOT NULL, subject_id INT NOT NULL, schedule_id INT NULL,
+  id INT AUTO_INCREMENT PRIMARY KEY, teacher_id INT NOT NULL, subject_id INT NOT NULL, year_level TINYINT UNSIGNED NULL, schedule_id INT NULL,
   title VARCHAR(160) NOT NULL, starts_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, expires_at DATETIME NOT NULL,
   active TINYINT(1) NOT NULL DEFAULT 1, FOREIGN KEY (teacher_id) REFERENCES teachers(id),
   FOREIGN KEY (subject_id) REFERENCES subjects(id), FOREIGN KEY (schedule_id) REFERENCES schedules(id)

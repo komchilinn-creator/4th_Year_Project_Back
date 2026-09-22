@@ -57,11 +57,12 @@ final class AdminController extends BaseController
         $this->auth()->role('admin');
         $code = trim((string) ($this->input['code'] ?? ''));
         $name = trim((string) ($this->input['name'] ?? ''));
-        if ($code === '' || $name === '') {
-            throw new HttpException('Subject code and name are required.', 422);
+        $yearLevel = (int) ($this->input['year_level'] ?? 0);
+        if ($code === '' || $name === '' || $yearLevel < 1 || $yearLevel > 9) {
+            throw new HttpException('Subject code, name, and a valid year level are required.', 422);
         }
 
-        (new Subject($this->db))->save($code, $name);
+        (new Subject($this->db))->save($code, $name, $yearLevel);
 
         return ['message' => 'Subject saved.'];
     }
