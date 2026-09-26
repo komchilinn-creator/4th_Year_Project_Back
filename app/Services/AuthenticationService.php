@@ -47,22 +47,45 @@ final class AuthenticationService
             $subjects = [];
             $yearLevel = null;
             if ($role === 'teacher') {
+                $classNames = array_values(array_unique(array_filter(array_map(
+                    static fn (string $value): string => trim($value),
+                    explode(',', $className)
+                ))));
+                if (!$classNames || strlen(implode(',', $classNames)) > 30) {
+                    throw new HttpException('Enter one or more valid teacher classes, for example 3IT,4IT.', 422);
+                }
+                $subjectModel = new Subject($this->db);
+                $availableSubjects = [];
+                foreach ($classNames as $teacherClass) {
+                    if (!preg_match('/^([1-9])IT$/', $teacherClass)) {
+                        throw new HttpException('Use class values such as 3IT,4IT separated by commas.', 422);
+                    }
+                    $classSubjects = $subjectModel->registrationSubjectsForClass($teacherClass);
+                    if (!$classSubjects) {
+                        throw new HttpException("No subjects are configured for class {$teacherClass}.", 422);
+                    }
+                    foreach ($classSubjects as $classSubject) {
+                        $availableSubjects[$classSubject['code']] = $classSubject;
+                    }
+                }
+                $className = implode(',', $classNames);
                 if (!$subjectCodes) {
                     throw new HttpException('Select at least one subject.', 422);
                 }
-                $subjectModel = new Subject($this->db);
                 foreach ($subjectCodes as $subjectCode) {
-                    $subject = $subjectModel->byRegistrationCode($subjectCode);
+                    $subject = $availableSubjects[$subjectCode] ?? null;
                     if (!$subject) {
-                        throw new HttpException("Invalid subject code: {$subjectCode}.", 422);
+                        throw new HttpException("Subject {$subjectCode} is not available for classes {$className}.", 422);
                     }
                     $subjects[] = $subject;
                 }
             } else {
-                if (!preg_match('/^([1-9])[A-Z0-9-]{1,29}$/', $className, $matches)) {
-                    throw new HttpException('Enter a valid class, for example 4IT1.', 422);
+                $identifier = strtoupper($identifier);
+                if (!preg_match('/^([1-9])IT[0-9]+$/', $identifier, $matches)) {
+                    throw new HttpException('Enter a valid student roll number, for example 4IT15.', 422);
                 }
                 $yearLevel = (int) $matches[1];
+                $className = $matches[1] . 'IT';
             }
 
             $userId = $this->users()->create(
@@ -76,7 +99,7 @@ final class AuthenticationService
             if ($role === 'student') {
                 (new Student($this->db))->create($userId, $identifier, $className, $yearLevel);
             } else {
-                (new Teacher($this->db))->create($userId, $identifier, $subjects);
+                (new Teacher($this->db))->create($userId, $className, $subjects);
             }
 
             $this->db->commit();
@@ -241,6 +264,7 @@ final class AuthenticationService
                     return $subject;
                 }, $teacherModel->subjectsByUser((int) $user['id']));
                 $safe['subjects'] = $subjects;
+                $safe['class_name'] = $teacher['class_name'];
                 $safe['year_levels'] = array_values(array_unique(array_column($subjects, 'year_level')));
                 // Retain the old fields for older clients while the array is authoritative.
                 $safe['subject'] = $subjects[0] ?? null;

@@ -15,6 +15,11 @@ CREATE TABLE IF NOT EXISTS students (
 );
 CREATE TABLE IF NOT EXISTS subjects (id INT AUTO_INCREMENT PRIMARY KEY, code VARCHAR(30) NOT NULL UNIQUE, name VARCHAR(120) NOT NULL, year_level TINYINT UNSIGNED NULL, teacher_registration_enabled TINYINT(1) NOT NULL DEFAULT 0);
 INSERT INTO subjects (code,name,year_level,teacher_registration_enabled) VALUES
+('IT31022','Computer Network',3,1),
+('IT31035','Web Development II (PHP)',3,1),
+('IT31045','Java Programming',3,1),
+('IT31055','Data Structure',3,1),
+('IT31016','Database Management System (DBMS)',3,1),
 ('IT41023','Computer Architecture and Organization',4,1),
 ('IT41033','Operating Systems',4,1),
 ('IT41032','Advanced Computer Networks',4,1),
@@ -23,7 +28,7 @@ INSERT INTO subjects (code,name,year_level,teacher_registration_enabled) VALUES
 ON DUPLICATE KEY UPDATE name=VALUES(name),year_level=VALUES(year_level),teacher_registration_enabled=VALUES(teacher_registration_enabled);
 CREATE TABLE IF NOT EXISTS teachers (
   id INT AUTO_INCREMENT PRIMARY KEY, user_id INT NOT NULL UNIQUE, staff_no VARCHAR(50) UNIQUE,
-  subject_id INT NULL, subject_code VARCHAR(30) NULL, year_level TINYINT UNSIGNED NULL,
+  class_name VARCHAR(30) NULL, subject_id INT NULL, subject_code VARCHAR(30) NULL, year_level TINYINT UNSIGNED NULL,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   FOREIGN KEY (subject_id) REFERENCES subjects(id)
 );
@@ -41,7 +46,7 @@ CREATE TABLE IF NOT EXISTS schedules (
   FOREIGN KEY (subject_id) REFERENCES subjects(id), FOREIGN KEY (teacher_id) REFERENCES teachers(id), FOREIGN KEY (classroom_id) REFERENCES classrooms(id)
 );
 CREATE TABLE IF NOT EXISTS attendance_sessions (
-  id INT AUTO_INCREMENT PRIMARY KEY, teacher_id INT NOT NULL, subject_id INT NOT NULL, year_level TINYINT UNSIGNED NULL, schedule_id INT NULL,
+  id INT AUTO_INCREMENT PRIMARY KEY, teacher_id INT NOT NULL, subject_id INT NOT NULL, year_level TINYINT UNSIGNED NULL, class_name VARCHAR(30) NULL, schedule_id INT NULL,
   title VARCHAR(160) NOT NULL, starts_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, expires_at DATETIME NOT NULL,
   active TINYINT(1) NOT NULL DEFAULT 1, FOREIGN KEY (teacher_id) REFERENCES teachers(id),
   FOREIGN KEY (subject_id) REFERENCES subjects(id), FOREIGN KEY (schedule_id) REFERENCES schedules(id)
