@@ -1,0 +1,11 @@
+Options -Indexes
+RewriteEngine On
+RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+
+# The production document root contains the application so the public API can
+# use /index.php, but internal source/configuration directories are not public.
+RewriteRule ^(?:app|config|database|docs|routes)(?:/|$) - [F,L,NC]
+
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^ index.php [QSA,L]

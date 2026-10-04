@@ -1,9 +1,11 @@
 <?php
 
+$environment = require __DIR__ . '/environment.php';
+
 return [
-    // TEMPORARY local development only. Set false before deployment.
-    // Only direct loopback requests may explicitly skip GPS.
-    'allow_local_development_bypass' => true,
+    // The bypass is available only in the local development profile. Production
+    // always requires the browser's real GPS values.
+    'allow_local_development_bypass' => $environment === 'development',
     // Change these values to the GPS point where attendance is allowed.
     'latitude' => 16.8409,
     'longitude' => 96.1735,

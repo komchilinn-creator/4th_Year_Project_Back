@@ -21,6 +21,31 @@ Student QR submissions must include `latitude`, `longitude`, and `accuracy`. The
 
 The default XAMPP user configuration is in `config/database.php`. Change it if your MySQL root account has a password.
 
+## InfinityFree deployment
+
+The environment is selected automatically from the backend hostname. Localhost
+uses the existing XAMPP database. `easyqrapi.freedev.app` uses
+`config/database.production.php`, which is intentionally ignored by Git because
+it contains the server-only MySQL credentials. Upload that file manually with
+the backend; do not upload it to the frontend host.
+
+Upload the backend project inside `htdocs/api` so the API folder's `index.php`,
+`.htaccess`, `app`, `config`, and `public` paths remain together. The production
+API endpoint is:
+
+`https://easyqrapi.freedev.app/api/index.php?action=health`
+
+Production requests use the same `https://easyqrapi.freedev.app` origin as the
+frontend. Localhost and private-LAN origins remain available only in the
+development profile. The GPS development bypass is also disabled automatically
+in production.
+
+In InfinityFree phpMyAdmin, select the already-created
+`if0_43080986_qr_attendance` database before importing. If an exported SQL file
+contains `CREATE DATABASE ...` or `USE ...`, omit only those database-selection
+statements from the upload copy. Do not alter any table definitions, keys,
+relationships, or seed data. The tracked `database/schema.sql` is unchanged.
+
 ## Login rules
 
 Students are registered to one device using the client device UUID; administrators can clear that registration with `admin/device/reset`. Teacher logins are multi-device: each successful login receives its own API token and does not invalidate a teacher's sessions on other devices. Logging out removes only the current device's token.

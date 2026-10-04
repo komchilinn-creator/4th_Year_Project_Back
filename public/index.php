@@ -1,15 +1,44 @@
 <?php
 declare(strict_types=1);
 
-session_start();
+$appConfig = require dirname(__DIR__) . '/config/app.php';
+date_default_timezone_set($appConfig['timezone']);
+
 header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store');
-$origin = $_SERVER['HTTP_ORIGIN'] ?? '*';
-header("Access-Control-Allow-Origin: {$origin}");
-header('Vary: Origin'); header('Access-Control-Allow-Credentials: true');
+header('Vary: Origin');
+
+$origin = (string) ($_SERVER['HTTP_ORIGIN'] ?? '');
+$allowedOrigins = $appConfig['cors_allowed_origins'] ?? [];
+$isDevelopment = ($appConfig['environment'] ?? 'development') === 'development';
+$isLocalDevelopmentOrigin = $isDevelopment && preg_match(
+    '#^https?://(?:localhost|127\.0\.0\.1|\[::1\]|10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2})(?::\d+)?$#',
+    $origin
+) === 1;
+$isAllowedOrigin = $origin === ''
+    || in_array($origin, $allowedOrigins, true)
+    || $isLocalDevelopmentOrigin;
+
+if (!$isAllowedOrigin) {
+    http_response_code(403);
+    echo json_encode(['ok' => false, 'message' => 'Origin is not allowed.']);
+    exit;
+}
+
+if ($origin !== '') {
+    header("Access-Control-Allow-Origin: {$origin}");
+    header('Access-Control-Allow-Credentials: true');
+}
 header('Access-Control-Allow-Headers: Content-Type, Authorization');
-header('Access-Control-Allow-Methods: GET, POST, PUT, OPTIONS');
-if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') exit;
+header('Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS');
+header('Access-Control-Max-Age: 600');
+
+if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'OPTIONS') {
+    http_response_code(204);
+    exit;
+}
+
+session_start();
 
 spl_autoload_register(function (string $class): void {
     $path = dirname(__DIR__) . '/app/' . str_replace('App\\', '', $class) . '.php';
@@ -21,7 +50,7 @@ use App\Helpers\ApiResponse;
 
 try {
     $config = require dirname(__DIR__) . '/config/database.php';
-    $pdo = new PDO("mysql:host={$config['host']};dbname={$config['database']};charset={$config['charset']}", $config['username'], $config['password'], [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
+    $pdo = new PDO("mysql:host={$config['host']};port={$config['port']};dbname={$config['database']};charset={$config['charset']}", $config['username'], $config['password'], [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
     $body = json_decode(file_get_contents('php://input'), true); $body = is_array($body) ? $body : ($_SERVER['REQUEST_METHOD'] === 'GET' ? $_GET : $_POST);
     $action = (string)($_GET['action'] ?? 'health');
     $controllers = ['auth' => new AuthController($pdo, $body), 'student' => new StudentController($pdo, $body), 'teacher' => new TeacherController($pdo, $body), 'attendance' => new AttendanceController($pdo, $body), 'report' => new ReportController($pdo, $body), 'admin' => new AdminController($pdo, $body)];
