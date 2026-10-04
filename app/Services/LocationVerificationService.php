@@ -14,24 +14,10 @@ final class LocationVerificationService
 
     public function verify(array $input): array
     {
-        if (($input['development_location_bypass'] ?? false) === true
-            && ($this->config['allow_local_development_bypass'] ?? false) === true
-            && in_array($_SERVER['REMOTE_ADDR'] ?? '', ['127.0.0.1', '::1', '::ffff:127.0.0.1'], true)) {
-            // Never fabricate coordinates for a development attendance record.
-            return [
-                'latitude' => null,
-                'longitude' => null,
-                'accuracy' => null,
-                'distance_from_classroom' => null,
-                'allowed_radius' => null,
-                'development_bypass' => true,
-            ];
-        }
-
-        foreach (['latitude', 'longitude', 'accuracy'] as $field) {
+        foreach (['latitude', 'longitude'] as $field) {
             if (!array_key_exists($field, $input) || $input[$field] === '' || $input[$field] === null) {
                 throw new HttpException(
-                    'Location permission is required to record attendance.',
+                    'Location permission is required to record attendance. Please enable location access and try again.',
                     422,
                     'LOCATION_PERMISSION_REQUIRED'
                 );
@@ -43,12 +29,18 @@ final class LocationVerificationService
 
         $latitude = (float)$input['latitude'];
         $longitude = (float)$input['longitude'];
-        $accuracy = (float)$input['accuracy'];
+        $accuracy = null;
+        if (array_key_exists('accuracy', $input) && $input['accuracy'] !== '' && $input['accuracy'] !== null) {
+            if (!is_numeric($input['accuracy'])) {
+                throw new HttpException('Invalid location coordinates.', 422, 'INVALID_COORDINATES');
+            }
+            $accuracy = (float)$input['accuracy'];
+        }
 
-        if (!is_finite($latitude) || !is_finite($longitude) || !is_finite($accuracy)
+        if (!is_finite($latitude) || !is_finite($longitude)
             || $latitude < -90 || $latitude > 90
             || $longitude < -180 || $longitude > 180
-            || $accuracy <= 0) {
+            || ($accuracy !== null && (!is_finite($accuracy) || $accuracy < 0))) {
             throw new HttpException('Invalid location coordinates.', 422, 'INVALID_COORDINATES');
         }
 
@@ -63,7 +55,7 @@ final class LocationVerificationService
             throw new \RuntimeException('Attendance location configuration is invalid.');
         }
 
-        if ($accuracy > $maximumAccuracy) {
+        if ($accuracy !== null && $accuracy > $maximumAccuracy) {
             throw new HttpException(
                 'Your location is not accurate enough. Enable precise GPS/location and try again.',
                 422,
@@ -74,7 +66,7 @@ final class LocationVerificationService
         $distance = $this->haversineDistance($latitude, $longitude, $schoolLatitude, $schoolLongitude);
         if ($distance > $allowedRadius) {
             throw new HttpException(
-                'You are outside the allowed attendance area.',
+                'Attendance cannot be recorded because you are outside the allowed university area.',
                 403,
                 'OUTSIDE_ALLOWED_AREA'
             );
@@ -83,7 +75,7 @@ final class LocationVerificationService
         return [
             'latitude' => round($latitude, 7),
             'longitude' => round($longitude, 7),
-            'accuracy' => round($accuracy, 2),
+            'accuracy' => $accuracy === null ? null : round($accuracy, 2),
             'distance_from_classroom' => round($distance, 2),
             'allowed_radius' => $allowedRadius,
         ];

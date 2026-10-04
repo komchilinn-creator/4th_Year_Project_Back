@@ -13,11 +13,11 @@ The actual post-migration relationships are documented in [`docs/ER_DIAGRAM.md`]
 
 ## Attendance location
 
-Temporary local development: `allow_local_development_bypass` in `config/attendance.php` is currently enabled. On the localhost frontend, choose OK in the development prompt to submit `development_location_bypass: true`. PHP accepts this only when the direct connection address is loopback; forwarded headers are not trusted. Authentication, active-session checks, class checks, and duplicate prevention still apply. Bypassed rows have NULL GPS audit fields and the success response explicitly reports the bypass. Set the flag to `false` before deployment, including deployments behind a local reverse proxy. No database migration is needed for this option.
+GPS validation is required in every environment. Localhost development uses the same location requirement as production.
 
-Edit `config/attendance.php` to set the school/classroom latitude, longitude, allowed radius, and maximum accepted browser accuracy. The defaults are latitude `16.8409`, longitude `96.1735`, a `100` meter radius, and maximum accuracy of `100` meters.
+The fixed attendance center in `config/attendance.php` is West Yangon Technological University at latitude `16.8695824`, longitude `96.0071808`, with an allowed radius of `1609.344` meters (1 mile). The maximum accepted browser accuracy is `100` meters.
 
-Student QR submissions must include `latitude`, `longitude`, and `accuracy`. The API validates the ranges and accuracy, calculates Haversine distance on the server, and inserts attendance only when the reading is inside the configured radius.
+Student QR submissions must include `latitude` and `longitude`, plus browser-provided `accuracy` when available. The API validates coordinate ranges and any reported accuracy, calculates Haversine distance on the server, and inserts attendance only when the reading is inside the configured radius.
 
 The default XAMPP user configuration is in `config/database.php`. Change it if your MySQL root account has a password.
 

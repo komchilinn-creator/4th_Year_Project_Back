@@ -14,6 +14,7 @@ final class AttendanceService
         $assignmentId = (int)($in['teacher_subject_id'] ?? 0);
         $subjectId = (int)($in['subject_id'] ?? 0);
         $title = trim((string)($in['title'] ?? ''));
+        $durationInput = $in['duration_minutes'] ?? null;
         if (!$teacher) {
             throw new HttpException('Teacher account not found.', 404);
         }
@@ -24,22 +25,28 @@ final class AttendanceService
         if ($title === '' || strlen($title) > 150) {
             throw new HttpException('A title between 1 and 150 characters is required.', 422);
         }
+        if ((!is_int($durationInput) && !is_string($durationInput))
+            || !preg_match('/^(?:[1-9]|1[0-5])$/', (string)$durationInput)) {
+            throw new HttpException('Session duration must be a whole number from 1 to 15 minutes.', 422, 'INVALID_SESSION_DURATION');
+        }
+        $durationMinutes = (int)$durationInput;
         $token = (new QrCodeService())->token();
         $this->db->beginTransaction();
         try {
             $teacherLock = $this->db->prepare('SELECT id FROM teachers WHERE id=? FOR UPDATE');
             $teacherLock->execute([$teacher['id']]);
+            $this->expireDueSessions((int)$teacher['id']);
             $existing = $this->db->prepare('SELECT id FROM attendance_sessions WHERE teacher_id=? AND active=1 LIMIT 1');
             $existing->execute([$teacher['id']]);
             if ($existing->fetchColumn()) {
                 throw new HttpException('You already have an active QR attendance session. End it before creating another.', 409, 'ACTIVE_SESSION_EXISTS');
             }
 
-            $this->db->prepare('INSERT INTO attendance_sessions(teacher_id,subject_id,teacher_subject_id,year_level,class_name,title,starts_at,expires_at,ended_at,active) VALUES(?,?,?,?,?,?,NOW(),NULL,NULL,1)')->execute([
+            $this->db->prepare('INSERT INTO attendance_sessions(teacher_id,subject_id,teacher_subject_id,year_level,class_name,title,starts_at,expires_at,ended_at,active) VALUES(?,?,?,?,?,?,NOW(),DATE_ADD(NOW(), INTERVAL ' . $durationMinutes . ' MINUTE),NULL,1)')->execute([
                 $teacher['id'], $assignment['id'], $assignment['assignment_id'], $assignment['year_level'], $assignment['class_name'], $title,
             ]);
             $sessionId = (int)$this->db->lastInsertId();
-            $this->db->prepare('INSERT INTO qr_codes(session_id,token_hash,display_token,expires_at,active) VALUES(?,?,?,NULL,1)')->execute([$sessionId, password_hash($token, PASSWORD_DEFAULT), $token]);
+            $this->db->prepare('INSERT INTO qr_codes(session_id,token_hash,display_token,expires_at,active) SELECT ?,?,?,expires_at,1 FROM attendance_sessions WHERE id=?')->execute([$sessionId, password_hash($token, PASSWORD_DEFAULT), $token, $sessionId]);
             $this->db->commit();
         } catch (\Throwable $e) {
             $this->db->rollBack();
@@ -51,6 +58,7 @@ final class AttendanceService
 
     public function scan(int $userId, string $token, array $locationInput): array
     {
+        $this->expireDueSessions();
         $token = $this->normaliseQrPayload($token);
         if ($token === '') {
             throw new HttpException('A QR token is required.', 422, 'INVALID_QR');
@@ -60,7 +68,7 @@ final class AttendanceService
             throw new HttpException('Student account not found.', 403);
         }
         $rows = $this->db->query(
-            'SELECT q.token_hash,q.session_id,q.active qr_active,x.active session_active,x.subject_id,x.teacher_id,x.year_level,x.class_name,'
+            'SELECT q.token_hash,q.session_id,q.active qr_active,x.active session_active,x.expires_at,x.subject_id,x.teacher_id,x.year_level,x.class_name,'
             . 'sub.code subject_code,sub.name subject_name,sub.semester_id,sem.semester_number,sem.name semester_name,'
             . 'tt.class_id,c.name assigned_class_name,u.full_name teacher_name '
             . 'FROM qr_codes q JOIN attendance_sessions x ON x.id=q.session_id '
@@ -69,7 +77,7 @@ final class AttendanceService
             . 'JOIN subjects sub ON sub.id=x.subject_id AND sub.semester_id=tt.semester_id '
             . 'JOIN semesters sem ON sem.id=sub.semester_id JOIN classes c ON c.id=tt.class_id '
             . 'JOIN teachers t ON t.id=x.teacher_id JOIN users u ON u.id=t.user_id '
-            . 'WHERE q.active=1 AND x.active=1'
+            . 'WHERE q.active=1 AND x.active=1 AND (x.expires_at IS NULL OR x.expires_at>NOW())'
         )->fetchAll();
         $qr = null;
         foreach ($rows as $row) {
@@ -79,11 +87,18 @@ final class AttendanceService
             }
         }
         if (!$qr) {
-            $ended = $this->db->prepare('SELECT q.token_hash FROM qr_codes q JOIN attendance_sessions x ON x.id=q.session_id WHERE q.display_token=? AND (q.active=0 OR x.active=0) ORDER BY q.id DESC LIMIT 1');
+            $ended = $this->db->prepare('SELECT q.token_hash,x.expires_at,x.ended_at FROM qr_codes q JOIN attendance_sessions x ON x.id=q.session_id WHERE q.display_token=? AND (q.active=0 OR x.active=0 OR x.expires_at<=NOW()) ORDER BY q.id DESC LIMIT 1');
             $ended->execute([$token]);
-            $endedHash = $ended->fetchColumn();
-            if ($endedHash && password_verify($token, (string)$endedHash)) {
-                throw new HttpException('This QR attendance session has ended.', 410, 'SESSION_ENDED');
+            $endedSession = $ended->fetch();
+            if ($endedSession && password_verify($token, (string)$endedSession['token_hash'])) {
+                $expired = $endedSession['expires_at'] !== null
+                    && (($endedSession['ended_at'] !== null && $endedSession['ended_at'] >= $endedSession['expires_at'])
+                        || strtotime((string)$endedSession['expires_at']) <= time());
+                throw new HttpException(
+                    $expired ? 'This QR attendance session has expired.' : 'This QR attendance session has ended.',
+                    410,
+                    $expired ? 'SESSION_EXPIRED' : 'SESSION_ENDED'
+                );
             }
             throw new HttpException('Invalid QR code.', 422, 'INVALID_QR');
         }
@@ -103,11 +118,18 @@ final class AttendanceService
         $this->db->beginTransaction();
         try {
             $stillValid = $this->db->prepare(
-                'SELECT q.id FROM qr_codes q JOIN attendance_sessions x ON x.id=q.session_id WHERE q.session_id=? AND q.active=1 AND x.active=1 FOR UPDATE'
+                'SELECT q.id FROM qr_codes q JOIN attendance_sessions x ON x.id=q.session_id WHERE q.session_id=? AND q.active=1 AND x.active=1 AND (x.expires_at IS NULL OR x.expires_at>NOW()) FOR UPDATE'
             );
             $stillValid->execute([(int)$qr['session_id']]);
             if (!$stillValid->fetchColumn()) {
-                throw new HttpException('This QR attendance session has ended.', 410, 'SESSION_ENDED');
+                $this->expireDueSessions((int)$qr['teacher_id']);
+                $this->db->commit();
+                $expired = $qr['expires_at'] !== null && strtotime((string)$qr['expires_at']) <= time();
+                throw new HttpException(
+                    $expired ? 'This QR attendance session has expired.' : 'This QR attendance session has ended.',
+                    410,
+                    $expired ? 'SESSION_EXPIRED' : 'SESSION_ENDED'
+                );
             }
 
             $recorded = (new Attendance($this->db))->record(
@@ -188,10 +210,12 @@ final class AttendanceService
         try {
             $teacherLock = $this->db->prepare('SELECT id FROM teachers WHERE id=? FOR UPDATE');
             $teacherLock->execute([$teacher['id']]);
+            $this->expireDueSessions((int)$teacher['id']);
             $active = $this->db->prepare('SELECT id FROM attendance_sessions WHERE teacher_id=? AND active=1 ORDER BY id DESC LIMIT 1 FOR UPDATE');
             $active->execute([$teacher['id']]);
             $sessionId = (int)$active->fetchColumn();
             if (!$sessionId) {
+                $this->db->commit();
                 throw new HttpException('There is no active QR attendance session to end.', 404, 'NO_ACTIVE_SESSION');
             }
             if ($requestedSessionId && $requestedSessionId !== $sessionId) {
@@ -245,6 +269,7 @@ final class AttendanceService
         if (!$teacher) {
             throw new HttpException('Teacher account not found.', 404);
         }
+        $this->expireDueSessions((int)$teacher['id']);
         $assignmentId = (int)($in['teacher_subject_id'] ?? 0);
         $subjectId = (int)($in['subject_id'] ?? 0);
         $subject = (new Teacher($this->db))->assignmentForTeacher((int)$teacher['id'], $assignmentId, $subjectId);
@@ -261,8 +286,9 @@ final class AttendanceService
             . 'ORDER BY s.starts_at DESC,s.id DESC'
         );
         $query->execute([$teacher['id'], $subject['assignment_id']]);
-        $sessions = array_map(static function (array $row): array {
+        $sessions = array_map(function (array $row): array {
             $isActive = (int)$row['session_active'] === 1 && (int)$row['qr_active'] === 1;
+            $isExpired = $this->isExpiredRow($row);
             return [
                 'id' => (int)$row['id'],
                 'session_id' => (int)$row['id'],
@@ -270,8 +296,9 @@ final class AttendanceService
                 'year_level' => (int)$row['year_level'],
                 'class_name' => $row['class_name'],
                 'starts_at' => $row['starts_at'],
+                'expires_at' => $row['expires_at'],
                 'ends_at' => $isActive ? null : ($row['ended_at'] ?: $row['expires_at']),
-                'status' => $isActive ? 'ACTIVE' : 'ENDED',
+                'status' => $isActive ? 'ACTIVE' : ($isExpired ? 'EXPIRED' : 'ENDED'),
                 'active' => $isActive,
             ];
         }, $query->fetchAll());
@@ -344,6 +371,7 @@ final class AttendanceService
 
     private function sessionForTeacher(int $teacherId, ?int $sessionId = null, bool $latestWhenInactive = false): ?array
     {
+        $this->expireDueSessions($teacherId);
         $where = 's.teacher_id=?';
         $parameters = [$teacherId];
         if ($sessionId !== null) {
@@ -355,6 +383,7 @@ final class AttendanceService
 
         $query = $this->db->prepare(
             'SELECT s.id,s.title,s.year_level,s.class_name,s.teacher_subject_id,s.starts_at,s.ended_at,s.expires_at,s.active session_active,'
+            . 'UNIX_TIMESTAMP(NOW()) server_timestamp,UNIX_TIMESTAMP(s.expires_at) expires_at_timestamp,TIMESTAMPDIFF(MINUTE,s.starts_at,s.expires_at) duration_minutes,'
             . 'q.active qr_active,sub.id subject_id,sub.code subject_code,sub.name subject_name,sub.semester_id,'
             . 'sem.semester_number,sem.name semester_name,ay.id academic_year_id,ay.name academic_year_name,'
             . 'tt.class_id,q.display_token '
@@ -371,6 +400,7 @@ final class AttendanceService
         }
 
         $isActive = (int)$row['session_active'] === 1 && (int)$row['qr_active'] === 1;
+        $isExpired = $this->isExpiredRow($row);
         $token = $isActive ? ($row['display_token'] ?: null) : null;
         return [
             'id' => (int)$row['id'],
@@ -382,9 +412,13 @@ final class AttendanceService
             'class_name' => $row['class_name'],
             'class' => $row['class_name'],
             'starts_at' => $row['starts_at'],
+            'expires_at' => $row['expires_at'],
+            'expires_at_timestamp' => $row['expires_at_timestamp'] === null ? null : (int)$row['expires_at_timestamp'],
+            'server_timestamp' => (int)$row['server_timestamp'],
+            'duration_minutes' => $row['duration_minutes'] === null ? null : (int)$row['duration_minutes'],
             'ended_at' => $row['ended_at'],
             'ends_at' => $isActive ? null : ($row['ended_at'] ?: $row['expires_at']),
-            'status' => $isActive ? 'ACTIVE' : 'ENDED',
+            'status' => $isActive ? 'ACTIVE' : ($isExpired ? 'EXPIRED' : 'ENDED'),
             'active' => $isActive,
             'subject' => [
                 'id' => (int)$row['subject_id'],
@@ -396,5 +430,30 @@ final class AttendanceService
             'token' => $token,
             'qr_payload' => $token ? 'ATTENDQR:' . $token : null,
         ];
+    }
+
+    private function expireDueSessions(?int $teacherId = null): void
+    {
+        $teacherFilter = $teacherId === null ? '' : ' AND teacher_id=?';
+        $parameters = $teacherId === null ? [] : [$teacherId];
+        $expire = $this->db->prepare(
+            'UPDATE attendance_sessions SET active=0,ended_at=COALESCE(ended_at,expires_at) '
+            . 'WHERE active=1 AND expires_at IS NOT NULL AND expires_at<=NOW()' . $teacherFilter
+        );
+        $expire->execute($parameters);
+
+        $qrTeacherFilter = $teacherId === null ? '' : ' AND s.teacher_id=?';
+        $expireQr = $this->db->prepare(
+            'UPDATE qr_codes q JOIN attendance_sessions s ON s.id=q.session_id SET q.active=0 '
+            . 'WHERE q.active=1 AND s.active=0 AND s.expires_at IS NOT NULL AND s.expires_at<=NOW()' . $qrTeacherFilter
+        );
+        $expireQr->execute($parameters);
+    }
+
+    private function isExpiredRow(array $row): bool
+    {
+        return $row['expires_at'] !== null
+            && $row['ended_at'] !== null
+            && $row['ended_at'] >= $row['expires_at'];
     }
 }
