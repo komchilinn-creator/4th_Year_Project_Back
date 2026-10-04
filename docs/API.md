@@ -20,4 +20,6 @@ Students submit `token`, `latitude`, `longitude`, and `accuracy` to `student/sca
 
 `reports/monthly` returns attended sessions, total conducted sessions, and the calculated percentage. Teacher requests use `teacher_subject_id`; the API scopes sessions and students to that assignment's subject, semester, and class. Rows below the 75% requirement include `highlight_red: true` for dynamic UI highlighting.
 
+`reports/overall` returns the authenticated student's cumulative attended sessions, conducted sessions, and percentage for each subject in the student's existing class and semester. It uses the same report row structure as `reports/monthly` and does not change monthly reporting.
+
 Administrators may approve accounts with `admin/verify`, enable or disable non-admin accounts with `admin/status` (`user_id`, `status`), and reset a student's device with `admin/device/reset`.

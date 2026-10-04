@@ -35,6 +35,37 @@ final class ReportService
             );
     }
 
+    public function overall(array $user): array
+    {
+        if ($user['role'] !== 'student') {
+            throw new HttpException('Overall attendance is available to students.', 403);
+        }
+
+        $student = (new Student($this->db))->byUser((int)$user['id']);
+        if (!$student) throw new HttpException('Student account not found.', 404);
+
+        $statement = $this->db->prepare(
+            "SELECT sub.id,sub.code,sub.name,sub.semester_id,
+                    COUNT(DISTINCT x.id) total_sessions,
+                    COUNT(DISTINCT CASE WHEN a.status IN ('present','late') THEN a.session_id END) attended
+             FROM subjects sub
+             LEFT JOIN attendance_sessions x ON x.subject_id=sub.id
+                AND EXISTS (
+                    SELECT 1 FROM teacher_subjects tsa JOIN teacher_terms tt ON tt.id=tsa.teacher_term_id
+                    WHERE tsa.id=x.teacher_subject_id AND tt.class_id=? AND tt.semester_id=?
+                )
+             LEFT JOIN attendance a ON a.session_id=x.id AND a.student_id=?
+             WHERE sub.semester_id=? AND sub.teacher_registration_enabled=1
+             GROUP BY sub.id,sub.code,sub.name,sub.semester_id ORDER BY sub.name,sub.id"
+        );
+        $statement->execute([$student['class_id'], $student['semester_id'], $student['id'], $student['semester_id']]);
+
+        $response = $this->response($statement->fetchAll(), 'overall', (int)$student['year_level']);
+        $response['scope'] = 'overall';
+        $response['semester_id'] = (int)$student['semester_id'];
+        return $response;
+    }
+
     private function studentMonthly(array $user, string $month, string $start, string $end): array
     {
         $student = (new Student($this->db))->byUser((int) $user['id']);

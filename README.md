@@ -37,5 +37,5 @@ Change this password before deploying anywhere beyond local development.
 `register`, `login`, `logout`, `me`, `student/profile`, `student/attendance`,
 `student/schedule`, `student/scan`, `teacher/assignments`, `attendance/create`, `attendance/active`, `attendance/end`, `attendance/live`,
 `attendance/sessions`, `attendance/session`,
-`reports/monthly`, `admin/users`, `admin/verify`, `admin/device/reset`,
+`reports/monthly`, `reports/overall`, `admin/users`, `admin/verify`, `admin/device/reset`,
 `admin/subject`, and `subjects`.
